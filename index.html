@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Monitor · Compliance Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        :root {
+            --bg-0: #07090f; --panel: rgba(255,255,255,0.035); --panel-2: rgba(255,255,255,0.02);
+            --panel-border: rgba(255,255,255,0.08);
+            --btc: #f7931a; --btc-soft: #ffb84d; --green: #2dd4a7; --amber: #fbbf24;
+            --red: #f25f5c; --blue: #5b8def; --text: #eef2f8; --text-dim: #8a94a6;
+            --text-faint: #525c6b; --mono: 'JetBrains Mono', monospace;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-0);
+            color: var(--text); overflow: hidden; -webkit-font-smoothing: antialiased;
+        }
+        #bg-canvas { position: fixed; inset: 0; z-index: 0; }
+        .bg-glow { position: fixed; width: 540px; height: 540px; border-radius: 50%; filter: blur(120px); opacity: 0.16; z-index: 0; pointer-events: none; }
+        .bg-glow.one { background: var(--btc); top: -200px; right: -140px; }
+        .bg-glow.two { background: var(--blue); bottom: -240px; left: -140px; opacity: 0.1; }
+
+        .shell {
+            position: relative; z-index: 10; height: 100vh;
+            display: flex; flex-direction: column; padding: 16px 20px; gap: 14px;
+            max-width: 1680px; margin: 0 auto;
+        }
+
+        .card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 16px; backdrop-filter: blur(20px); }
+
+        /* ---------- Header ---------- */
+        .hdr { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-mark { width: 40px; height: 40px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), var(--btc-soft)); display: grid; place-items: center; font-size: 22px; font-weight: 800; color: #1a1205; box-shadow: 0 6px 22px rgba(247,147,26,0.35); }
+        .brand-text h1 { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+        .brand-text p { font-size: 11px; color: var(--text-dim); font-weight: 500; }
+        .hdr-clock { text-align: center; font-family: var(--mono); }
+        .hdr-clock .t { font-size: 19px; font-weight: 700; letter-spacing: 0.5px; }
+        .hdr-clock .d { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.6px; }
+        .hdr-right { display: flex; align-items: center; gap: 10px; }
+        .alert-btn { padding: 8px 14px; border-radius: 100px; background: rgba(255,255,255,0.04); border: 1px solid var(--panel-border); color: var(--text-dim); font-size: 12px; font-weight: 600; cursor: pointer; transition: all .2s; font-family: inherit; }
+        .alert-btn:hover { border-color: rgba(247,147,26,.4); color: var(--text); }
+        .alert-btn.on { background: rgba(247,147,26,.12); border-color: rgba(247,147,26,.4); color: var(--btc); }
+        .live-pill { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: rgba(45,212,167,.08); border: 1px solid rgba(45,212,167,.25); border-radius: 100px; font-size: 12px; font-weight: 600; color: var(--green); }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: ping 2s infinite; }
+        @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(45,212,167,.5);} 70% { box-shadow: 0 0 0 7px rgba(45,212,167,0);} 100% { box-shadow: 0 0 0 0 rgba(45,212,167,0);} }
+
+        /* ---------- Bento grid ---------- */
+        .grid { flex: 1; display: grid; grid-template-columns: 1.65fr 1fr; grid-template-rows: auto 1fr; gap: 14px; min-height: 0; }
+        .area-flow { grid-column: 1; grid-row: 1; }
+        .area-tx { grid-column: 1; grid-row: 2; min-height: 0; }
+        .area-side { grid-column: 2; grid-row: 1 / span 2; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+
+        /* ---------- Flow + KPIs (top-left) ---------- */
+        .flow-card { padding: 16px 18px; }
+        .flow { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: stretch; margin-bottom: 14px; }
+        .flow-wallet { padding: 13px 15px; border-radius: 13px; border: 1px solid var(--panel-border); background: var(--panel-2); }
+        .flow-wallet.sender { border-color: rgba(91,141,239,.25); }
+        .flow-wallet.receiver { border-color: rgba(45,212,167,.25); }
+        .flow-wallet.incoming { border-color: rgba(247,147,26,.6); box-shadow: 0 0 26px rgba(247,147,26,.12); }
+        .flow-role { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; font-weight: 700; margin-bottom: 7px; }
+        .flow-wallet.sender .flow-role { color: var(--blue); }
+        .flow-wallet.receiver .flow-role { color: var(--green); }
+        .flow-wallet .addr { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--text-dim); word-break: break-all; margin-bottom: 10px; }
+        .flow-stats { display: flex; justify-content: space-between; gap: 10px; align-items: flex-end; }
+        .flow-stats > div { display: flex; flex-direction: column; gap: 3px; }
+        .fs-k { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); font-weight: 600; }
+        .fs-v { font-size: 14px; font-weight: 700; font-family: var(--mono); }
+        .flow-arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 92px; gap: 7px; }
+        .arrow-line { position: relative; width: 100%; height: 3px; border-radius: 3px; background: linear-gradient(90deg, var(--blue), var(--green)); opacity: .5; }
+        .arrow-line::after { content: '▶'; position: absolute; right: -4px; top: 50%; transform: translateY(-50%); color: var(--green); font-size: 10px; }
+        .arrow-pulse { position: absolute; top: -3px; left: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--btc); box-shadow: 0 0 10px var(--btc); opacity: 0; }
+        .flow-arrow.active .arrow-pulse { animation: travel 1.4s linear infinite; }
+        @keyframes travel { 0%{left:0;opacity:0;} 15%{opacity:1;} 85%{opacity:1;} 100%{left:100%;opacity:0;} }
+        .arrow-label { font-size: 10px; font-weight: 700; text-align: center; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; }
+        .flow-arrow.active .arrow-label { color: var(--btc); }
+        .flow-arrow.done .arrow-label { color: var(--green); }
+        .copy-btn { padding: 6px 12px; border-radius: 8px; background: rgba(45,212,167,.1); border: 1px solid rgba(45,212,167,.3); color: var(--green); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .2s; font-family: inherit; }
+        .copy-btn:hover { background: rgba(45,212,167,.2); }
+
+        .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .kpi { padding: 11px 13px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--panel-border); }
+        .kpi .k { font-size: 9px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 600; margin-bottom: 5px; }
+        .kpi .v { font-size: 20px; font-weight: 800; font-family: var(--mono); letter-spacing: -.5px; line-height: 1; }
+        .kpi .v.btc { color: var(--btc); }
+        .kpi .s { font-size: 10px; color: var(--text-faint); margin-top: 4px; font-family: var(--mono); }
+
+        /* ---------- Transactions (bottom-left, scrolls) ---------- */
+        .tx-panel { display: flex; flex-direction: column; min-height: 0; padding: 0; }
+        .panel-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
+        .panel-head .bar { width: 4px; height: 18px; border-radius: 2px; background: var(--btc); }
+        .panel-head h2 { font-size: 15px; font-weight: 700; }
+        .panel-head .count { margin-left: auto; font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
+        .tx-scroll { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+        .tx { flex-shrink: 0; border: 1px solid var(--panel-border); border-radius: 13px; overflow: hidden; background: var(--panel-2); transition: border-color .3s, transform .3s; }
+        .tx.flagged { border-color: rgba(242,95,92,.45); }
+        .tx.clear { border-color: rgba(45,212,167,.25); }
+        .tx.unexpected { border-color: rgba(251,191,36,.55); box-shadow: inset 0 0 0 1px rgba(251,191,36,.18), 0 0 22px rgba(251,191,36,.08); }
+        .tx.unexpected.flagged { border-color: rgba(242,95,92,.55); }
+        .tx-main { padding: 16px 18px; }
+        .tx-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+        .tx-amt { font-size: 22px; font-weight: 800; font-family: var(--mono); color: var(--green); letter-spacing: -.5px; }
+        .tx-amt .usd { font-size: 12px; color: var(--text-dim); font-weight: 500; margin-top: 2px; }
+        .tx-badges { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+        .badge { padding: 4px 10px; border-radius: 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+        .badge.new { color: #1a1205; background: linear-gradient(135deg, var(--btc), var(--btc-soft)); animation: pulse 1s infinite; }
+        .badge.confirmed { color: var(--green); background: rgba(45,212,167,.12); border: 1px solid rgba(45,212,167,.3); }
+        .badge.pending { color: var(--blue); background: rgba(91,141,239,.12); border: 1px solid rgba(91,141,239,.3); }
+        .badge.risk-low { color: var(--green); background: rgba(45,212,167,.12); border: 1px solid rgba(45,212,167,.3); }
+        .badge.risk-medium { color: var(--amber); background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.3); }
+        .badge.risk-high { color: var(--red); background: rgba(242,95,92,.14); border: 1px solid rgba(242,95,92,.4); }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.6;} }
+        .tx-meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .tx-meta .m .k { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); font-weight: 600; margin-bottom: 3px; }
+        .tx-meta .m .v { font-size: 12px; font-family: var(--mono); color: var(--text); }
+        .tx-meta .m .v.link { color: var(--btc); }
+        .source-panel { border-top: 1px solid var(--panel-border); background: rgba(0,0,0,.25); padding: 14px 18px; }
+        .source-head { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); margin-bottom: 12px; }
+        .source-item { display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 10px; background: var(--panel); border: 1px solid var(--panel-border); margin-bottom: 8px; }
+        .source-item:last-child { margin-bottom: 0; }
+        .source-item.danger { border-color: rgba(242,95,92,.4); background: rgba(242,95,92,.05); }
+        .source-item.warn { border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.04); }
+        .src-risk-icon { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center; font-size: 15px; }
+        .src-risk-icon.low { background: rgba(45,212,167,.12); }
+        .src-risk-icon.medium { background: rgba(251,191,36,.12); }
+        .src-risk-icon.high { background: rgba(242,95,92,.14); }
+        .src-body { flex: 1; min-width: 0; }
+        .src-addr { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+        .src-stats { font-size: 10px; color: var(--text-faint); margin-top: 2px; font-family: var(--mono); }
+        .src-flags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+        .flag { font-size: 9px; padding: 2px 7px; border-radius: 5px; font-weight: 600; background: rgba(255,255,255,.06); color: var(--text-dim); }
+        .flag.bad { background: rgba(242,95,92,.15); color: var(--red); }
+        .flag.caution { background: rgba(251,191,36,.13); color: var(--amber); }
+        .src-score { text-align: right; flex-shrink: 0; }
+        .src-score .n { font-size: 16px; font-weight: 800; font-family: var(--mono); }
+        .src-score .n.low { color: var(--green); } .src-score .n.medium { color: var(--amber); } .src-score .n.high { color: var(--red); }
+        .src-score .l { font-size: 8px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .5px; }
+        .src-loading { font-size: 11px; color: var(--text-faint); font-style: italic; }
+        .empty { text-align: center; padding: 40px 20px; margin: auto; }
+        .empty .e-ico { font-size: 44px; margin-bottom: 14px; opacity: .4; }
+        .empty h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+        .empty p { font-size: 12px; color: var(--text-dim); }
+        .empty .wait-bar { margin: 18px auto 0; width: 180px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.06); overflow: hidden; }
+        .empty .wait-bar i { display: block; height: 100%; width: 40%; background: linear-gradient(90deg, transparent, var(--btc), transparent); animation: scan 1.8s infinite; }
+        @keyframes scan { 0%{transform:translateX(-100%);} 100%{transform:translateX(350%);} }
+
+        /* ---------- Right column panels ---------- */
+        .mini { padding: 15px 17px; }
+        .mini-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); margin-bottom: 13px; }
+        .mini-head .ico { font-size: 14px; }
+        .mini-head .right { margin-left: auto; font-size: 11px; font-family: var(--mono); color: var(--text-faint); text-transform: none; letter-spacing: 0; }
+        .approved-list { display: flex; flex-direction: column; gap: 8px; }
+        .appr-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 10px; background: var(--panel-2); border: 1px solid rgba(45,212,167,.18); }
+        .appr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(45,212,167,.6); flex-shrink: 0; }
+        .appr-body { min-width: 0; flex: 1; }
+        .appr-label { font-size: 12px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 7px; }
+        .appr-trade { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--green); background: rgba(45,212,167,.1); border: 1px solid rgba(45,212,167,.25); padding: 1px 6px; border-radius: 100px; }
+        .appr-addr { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+        .appr-exp { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--btc); white-space: nowrap; }
+        .hook-btn { margin-left: auto; padding: 4px 9px; border-radius: 7px; background: rgba(91,141,239,.1); border: 1px solid rgba(91,141,239,.3); color: var(--blue); font-size: 10px; font-weight: 600; cursor: pointer; font-family: inherit; text-transform: none; letter-spacing: 0; transition: all .2s; }
+        .hook-btn:hover { background: rgba(91,141,239,.2); }
+        #webhook-status.synced { color: var(--green); }
+
+        /* Compliance */
+        .comp { display: flex; align-items: center; gap: 14px; }
+        .comp.flagged { }
+        .shield { width: 46px; height: 46px; flex-shrink: 0; border-radius: 12px; display: grid; place-items: center; font-size: 24px; background: rgba(45,212,167,.12); }
+        .comp.flagged .shield { background: rgba(242,95,92,.12); }
+        .comp-text { flex: 1; }
+        .comp-text h3 { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+        .comp-text p { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+        .comp-num { text-align: center; }
+        .comp-num .n { font-size: 22px; font-weight: 800; font-family: var(--mono); }
+        .comp-num .l { font-size: 8px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .5px; }
+
+        /* Confirmation tracker */
+        .conf-amt { font-size: 20px; font-weight: 800; font-family: var(--mono); color: var(--green); margin-bottom: 3px; }
+        .conf-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 14px; font-family: var(--mono); }
+        .conf-dots { display: flex; gap: 7px; margin-bottom: 10px; }
+        .conf-dot { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,.07); transition: background .4s; }
+        .conf-dot.on { background: linear-gradient(90deg, var(--btc), var(--green)); }
+        .conf-foot { display: flex; justify-content: space-between; font-size: 11px; font-family: var(--mono); }
+        .conf-foot .l { color: var(--text-faint); } .conf-foot .r { color: var(--text); font-weight: 600; }
+        .conf-empty { font-size: 12px; color: var(--text-faint); font-style: italic; text-align: center; padding: 10px 0; }
+
+        /* Network */
+        .net-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+        .net-item { padding: 11px 13px; border-radius: 11px; background: var(--panel-2); border: 1px solid var(--panel-border); }
+        .net-item .k { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); font-weight: 600; margin-bottom: 5px; }
+        .net-item .v { font-size: 17px; font-weight: 700; font-family: var(--mono); }
+        .net-item .v small { font-size: 10px; color: var(--text-dim); font-weight: 500; }
+
+        /* Block strip */
+        .blocks-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+        .block { flex: 0 0 auto; width: 72px; border-radius: 10px; overflow: hidden; border: 1px solid var(--panel-border); background: var(--panel-2); }
+        .block .bh { padding: 6px 7px; font-size: 9px; font-family: var(--mono); font-weight: 600; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--panel-border); }
+        .block .new-tag { font-size: 7px; font-weight: 800; padding: 1px 4px; border-radius: 3px; color: #1a1205; background: linear-gradient(135deg, var(--btc), var(--btc-soft)); }
+        .block .bf { height: 38px; display: grid; place-items: center; font-size: 19px; background: linear-gradient(160deg, rgba(247,147,26,.85), rgba(255,184,77,.6)); color: rgba(26,18,5,.5); }
+        .block.fresh .bf { animation: blockDrop .7s cubic-bezier(.34,1.56,.64,1); }
+        @keyframes blockDrop { 0%{transform:translateY(-100%);opacity:0;} 60%{opacity:1;} 100%{transform:translateY(0);opacity:1;} }
+
+        /* Info mini */
+        .info-mini { font-size: 11px; }
+        .info-mini .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--panel-border); }
+        .info-mini .row:last-child { border-bottom: none; }
+        .info-mini .k { color: var(--text-faint); } .info-mini .v { color: var(--text-dim); font-family: var(--mono); }
+        .info-mini .v.synced { color: var(--green); }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+
+        .fade-up { animation: fadeUp .6s ease both; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px);} to { opacity: 1; transform: translateY(0);} }
+
+        /* Responsive: allow scroll & stack on small screens */
+        @media (max-width: 1100px) {
+            body { overflow: auto; }
+            .shell { height: auto; min-height: 100vh; }
+            .grid { grid-template-columns: 1fr; grid-template-rows: none; }
+            .area-flow, .area-tx, .area-side { grid-column: 1; grid-row: auto; }
+            .area-side { overflow: visible; }
+            .tx-panel { max-height: 70vh; }
+        }
+        @media (max-width: 560px) {
+            .hdr-clock { display: none; }
+            .kpis { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+    <div class="bg-glow one"></div>
+    <div class="bg-glow two"></div>
+
+    <div class="shell">
+        <!-- Header -->
+        <div class="hdr fade-up">
+            <div class="brand">
+                <div class="brand-mark">₿</div>
+                <div class="brand-text">
+                    <h1>Payment Monitor</h1>
+                    <p>Real-time tracking · AML source screening</p>
+                </div>
+            </div>
+            <div class="hdr-clock">
+                <div class="t" id="clock-time">--:--:--</div>
+                <div class="d" id="clock-date">— · UTC —</div>
+            </div>
+            <div class="hdr-right">
+                <button class="alert-btn" id="alert-btn">🔕 Enable alerts</button>
+                <div class="live-pill"><span class="live-dot"></span> Live</div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- TOP LEFT: flow + KPIs -->
+            <div class="card flow-card area-flow fade-up">
+                <div class="flow">
+                    <div class="flow-wallet sender" id="sender-card">
+                        <div class="flow-role">📤 Wallet A (sender)</div>
+                        <div class="addr" id="sender-addr">bc1qhxaqrzg829j9382tratv8kjpau8cqwycph2smk</div>
+                        <div class="flow-stats">
+                            <div><span class="fs-k">Balance</span><span class="fs-v" id="sender-balance">— BTC</span></div>
+                            <div><span class="fs-k">Status</span><span class="fs-v" id="sender-status">checking…</span></div>
+                        </div>
+                    </div>
+                    <div class="flow-arrow" id="flow-arrow">
+                        <div class="arrow-line"><span class="arrow-pulse"></span></div>
+                        <div class="arrow-label" id="flow-state">Awaiting</div>
+                    </div>
+                    <div class="flow-wallet receiver" id="receiver-card">
+                        <div class="flow-role">📥 Wallet B (receiver)</div>
+                        <div class="addr" id="wallet-addr">bc1qr986pwg5e88h5fzjcajesf4qp3kekz6s9m3v3q</div>
+                        <div class="flow-stats">
+                            <div><span class="fs-k">Received</span><span class="fs-v" id="receiver-balance">— BTC</span></div>
+                            <div><button class="copy-btn" id="copy-btn">Copy</button></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="kpis">
+                    <div class="kpi"><div class="k">Total Received</div><div class="v btc" id="balance-btc">0.00000000</div><div class="s" id="balance-usd">$0.00</div></div>
+                    <div class="kpi"><div class="k">Transactions</div><div class="v" id="tx-count">0</div><div class="s">incoming</div></div>
+                    <div class="kpi"><div class="k">Current Block</div><div class="v" id="block-height">—</div><div class="s" id="block-age">—</div></div>
+                    <div class="kpi"><div class="k">BTC Price</div><div class="v" id="btc-price">$—</div><div class="s">USD spot</div></div>
+                </div>
+            </div>
+
+            <!-- BOTTOM LEFT: transactions (scrolls) -->
+            <div class="card tx-panel area-tx fade-up">
+                <div class="panel-head">
+                    <div class="bar"></div>
+                    <h2>Incoming Transactions</h2>
+                    <span class="count" id="tx-list-count"></span>
+                </div>
+                <div class="tx-scroll" id="tx-list">
+                    <div class="empty">
+                        <div class="e-ico">⏳</div>
+                        <h3>Listening for payments</h3>
+                        <p>You'll be alerted the moment Wallet A sends BTC.</p>
+                        <div class="wait-bar"><i></i></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN -->
+            <div class="area-side">
+                <div class="card mini comp fade-up" id="comp-card">
+                    <div class="shield" id="shield-icon">🛡️</div>
+                    <div class="comp-text">
+                        <h3 id="comp-title">All clear</h3>
+                        <p id="comp-desc">No flagged sources. Awaiting payments.</p>
+                    </div>
+                    <div class="comp-num"><div class="n" id="screened-count">0</div><div class="l">screened</div></div>
+                </div>
+
+                <div class="card mini fade-up">
+                    <div class="mini-head"><span class="ico">🤝</span> Approved Senders <span class="right" id="approved-count"></span></div>
+                    <div class="approved-list" id="approved-list"></div>
+                </div>
+
+                <div class="card mini fade-up">
+                    <div class="mini-head"><span class="ico">⏱️</span> Confirmation Tracker</div>
+                    <div id="conf-body"><div class="conf-empty">No active payment to track.</div></div>
+                </div>
+
+                <div class="card mini fade-up">
+                    <div class="mini-head"><span class="ico">🌐</span> Network</div>
+                    <div class="net-grid">
+                        <div class="net-item"><div class="k">Fee (next block)</div><div class="v" id="net-fee">— <small>sat/vB</small></div></div>
+                        <div class="net-item"><div class="k">Fee (~30 min)</div><div class="v" id="net-fee-slow">— <small>sat/vB</small></div></div>
+                        <div class="net-item"><div class="k">Last block</div><div class="v" id="net-blockage">—</div></div>
+                        <div class="net-item"><div class="k">Block txs</div><div class="v" id="net-blocktxs">—</div></div>
+                    </div>
+                </div>
+
+                <div class="card mini fade-up">
+                    <div class="mini-head"><span class="ico">⛓️</span> Block Activity <span class="right" id="block-count"></span></div>
+                    <div class="blocks-strip" id="block-grid"></div>
+                </div>
+
+                <div class="card mini fade-up">
+                    <div class="mini-head"><span class="ico">ℹ️</span> System <button class="hook-btn right" id="webhook-btn">⚙ Webhook</button></div>
+                    <div class="info-mini">
+                        <div class="row"><span class="k">Chain data</span><span class="v">blockstream.info</span></div>
+                        <div class="row"><span class="k">OFAC list</span><span class="v" id="ofac-status">syncing…</span></div>
+                        <div class="row"><span class="k">Configuration</span><span class="v" id="config-status">default</span></div>
+                        <div class="row"><span class="k">Push alerts</span><span class="v" id="webhook-status">not set</span></div>
+                        <div class="row"><span class="k">Refresh</span><span class="v">10s</span></div>
+                        <div class="row"><span class="k">Last update</span><span class="v" id="last-update">—</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Default wallet addresses (can be overridden via URL params)
+        let ADDRESS = 'bc1qr986pwg5e88h5fzjcajesf4qp3kekz6s9m3v3q';   // receiver (Wallet B)
+        // ---- Approved trade counterparties ----
+        // Every incoming payment to Wallet B should originate from one of these
+        // approved sender wallets. Funds from any other address are flagged as an
+        // UNEXPECTED SOURCE. Add one entry per trade / client.
+        //   addr      (required) the approved sender wallet
+        //   label     (required) display name
+        //   trade     (optional) trade/reference tag
+        //   expectBtc (optional) expected payment size in BTC — if set, a payment
+        //             whose amount differs by more than `tolerance` is flagged as
+        //             an AMOUNT MISMATCH. Omit to accept any amount.
+        //   tolerance (optional) allowed +/- in BTC (default: 0.5% of expectBtc)
+        let APPROVED_SENDERS = [
+            { addr: 'bc1qhxaqrzg829j9382tratv8kjpau8cqwycph2smk', label: 'Wallet A', trade: 'Trade #1' /*, expectBtc: 1.5, tolerance: 0.001 */ },
+        ];
+        let APPROVED_SET = new Set(APPROVED_SENDERS.map(s => s.addr));
+        let configSource = 'default';   // track if config came from URL params
+        const senderLabel = a => { const s = APPROVED_SENDERS.find(x => x.addr === a); return s ? s.label : null; };
+        const senderCfg = a => APPROVED_SENDERS.find(x => x.addr === a) || null;
+        let SENDER = APPROVED_SENDERS[0].addr;   // primary sender (flow visualisation)
+
+        // ---- Parse URL parameters for custom wallet configuration ----
+        function initializeFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const receiverParam = params.get('receiver');
+            const sendersParam = params.get('senders');
+
+            if (receiverParam && /^bc1[a-z0-9]{39,59}$|^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(receiverParam)) {
+                ADDRESS = receiverParam;
+                configSource = 'url';
+            }
+
+            if (sendersParam) {
+                const addrs = sendersParam.split(',').map(a => a.trim()).filter(a => /^bc1[a-z0-9]{39,59}$|^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(a));
+                if (addrs.length > 0) {
+                    APPROVED_SENDERS = addrs.map((addr, i) => ({
+                        addr,
+                        label: `Sender ${i + 1}`,
+                        trade: `Trade #${i + 1}`
+                    }));
+                    APPROVED_SET = new Set(APPROVED_SENDERS.map(s => s.addr));
+                    SENDER = APPROVED_SENDERS[0].addr;
+                    configSource = 'url';
+                }
+            }
+        }
+
+        // Get shareable URL with current configuration
+        function getShareableUrl() {
+            const params = new URLSearchParams();
+            params.set('receiver', ADDRESS);
+            params.set('senders', APPROVED_SENDERS.map(s => s.addr).join(','));
+            return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+        }
+        const API = 'https://blockstream.info/api';
+        let inflightTxid = null;
+
+        // ---- Outbound alert webhooks ----
+        // Push notifications reach you even when this tab is closed. Configure at
+        // runtime via the ⚙ button (saved in this browser's localStorage, kept out
+        // of the public source) or hard-code defaults below. Supported targets:
+        //   • Slack incoming webhook   (https://hooks.slack.com/services/...)
+        //   • Discord webhook          (https://discord.com/api/webhooks/...)
+        //   • Email / SMS / anything   point a Zapier/Make/n8n/Pipedream "catch
+        //     webhook" automation at the URL — it receives the full JSON payload.
+        const ALERT_WEBHOOKS_DEFAULT = [];
+        const getWebhooks = () => { try{ const s=localStorage.getItem('btc_alert_webhooks'); if(s) return s.split(/[\n,]/).map(x=>x.trim()).filter(Boolean); }catch{} return ALERT_WEBHOOKS_DEFAULT; };
+
+        // ---- Screening datasets ----
+        const OFAC_SDN = new Set([
+            '1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF','12QtD5BFwRsdNsAZY76UVE1xyCGNTojH9h',
+            '1FwZXt6EpRT7Fkndzv6K4b4DFoT4trbMrV','bc1q0sg9rdst255gtldsmcf8rk0764avqy2h2ksqs5',
+        ]);
+        const KNOWN_SCAM = new Set(['1Lpe9wKbnpAKRcDfBdYZcYvqYW7gpu87QM']);
+        const OFAC_SOURCE = 'https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_XBT.txt';
+
+        let currentBlock = 0, blockHistory = new Set(), knownTxids = new Set();
+        let screenedAddrs = new Map(), totalScreened = 0, flaggedTotal = 0, unexpectedTotal = 0, mismatchTotal = 0;
+        let btcPrice = 0, firstLoad = true;
+
+        // ---------------- Helpers ----------------
+        const sat2btc = s => s / 1e8;
+        const fmtBtc = b => b.toFixed(8);
+        const shortAddr = a => a.length > 18 ? a.slice(0,9)+'…'+a.slice(-7) : a;
+        const fmtUsd = n => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const ago = sec => sec < 60 ? sec+'s ago' : sec < 3600 ? Math.floor(sec/60)+'m ago' : Math.floor(sec/3600)+'h ago';
+        async function getJson(u){ const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); }
+        async function getText(u){ const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.text(); }
+        async function fetchBtcPrice(){ try{ const d=await getJson('https://api.coinbase.com/v2/exchange-rates?currency=BTC'); return parseFloat(d.data.rates.USD);}catch{return btcPrice||65000;} }
+
+        // ---------------- OFAC sync ----------------
+        async function syncOfac() {
+            try {
+                const txt = await getText(OFAC_SOURCE);
+                txt.split('\n').forEach(l => { const a=l.trim(); if(a && !a.startsWith('#')) OFAC_SDN.add(a); });
+                const el = document.getElementById('ofac-status');
+                el.textContent = `${OFAC_SDN.size.toLocaleString()} addrs ✓`; el.classList.add('synced');
+            } catch { const el=document.getElementById('ofac-status'); el.textContent = `${OFAC_SDN.size} (seed)`; }
+        }
+
+        // ---------------- Alerts ----------------
+        let alertsOn = false, audioCtx = null;
+        function beep(freqs, dur, type='sine', gain=0.18){ if(!audioCtx) return; const now=audioCtx.currentTime;
+            freqs.forEach((f,i)=>{ const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=type; o.frequency.value=f;
+                const s=now+i*dur; g.gain.setValueAtTime(0,s); g.gain.linearRampToValueAtTime(gain,s+0.02); g.gain.exponentialRampToValueAtTime(0.0001,s+dur);
+                o.connect(g).connect(audioCtx.destination); o.start(s); o.stop(s+dur); }); }
+        function soundPayment(){ beep([523.25,659.25,783.99],0.16,'sine',0.2); }
+        function soundFlagged(){ beep([440,370,440,370],0.18,'square',0.16); }
+        function notify(title, body, urgent=false){ if(alertsOn && 'Notification' in window && Notification.permission==='granted'){ try{ const n=new Notification(title,{body,icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="80" font-size="80">₿</text></svg>',requireInteraction:urgent}); setTimeout(()=>n.close(),urgent?30000:8000);}catch{} } }
+        async function enableAlerts(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); if(audioCtx.state==='suspended') await audioCtx.resume(); }catch{}
+            if('Notification' in window && Notification.permission==='default'){ try{ await Notification.requestPermission(); }catch{} }
+            alertsOn=true; const b=document.getElementById('alert-btn'); b.classList.add('on'); b.textContent='🔔 Alerts on'; beep([659.25,880],0.14,'sine',0.15); }
+
+        // ---- Webhook push (Slack / Discord / generic) ----
+        async function pushWebhook(payload){ const hooks=getWebhooks(); if(!hooks.length) return;
+            const line=`${payload.title}\n${payload.body}`;
+            for(const url of hooks){ try{
+                if(url.includes('hooks.slack.com')){ await fetch(url,{method:'POST',mode:'no-cors',body:JSON.stringify({text:line})}); }
+                else if(url.includes('discord.com/api/webhooks')||url.includes('discordapp.com/api/webhooks')){ await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:line})}); }
+                else { await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'btc-monitor',ts:new Date().toISOString(),...payload})}); }
+            }catch(e){ console.warn('webhook',url,e); } } }
+        // ---- Unified alert: sound + browser notification + webhook ----
+        function sendAlert({title, body, urgent=false, flagged=false, ...meta}){
+            if(flagged) soundFlagged(); else soundPayment();
+            notify(title, body, urgent);
+            pushWebhook({title, body, urgent, ...meta});
+        }
+        function configureWebhooks(){ const cur=(()=>{ try{ return localStorage.getItem('btc_alert_webhooks')||''; }catch{ return ''; } })();
+            const v=prompt('Alert webhook URL(s) — Slack / Discord / Zapier-email.\nComma- or newline-separated. Leave blank to disable.',cur);
+            if(v===null) return; try{ if(v.trim()) localStorage.setItem('btc_alert_webhooks',v.trim()); else localStorage.removeItem('btc_alert_webhooks'); }catch{}
+            updateWebhookStatus();
+            if(v.trim()) pushWebhook({title:'✅ BTC Monitor connected',body:'Webhook alerts are now active for Wallet B.',urgent:false}); }
+        function updateWebhookStatus(){ const el=document.getElementById('webhook-status'); if(!el) return; const n=getWebhooks().length;
+            el.textContent = n ? `${n} active ✓` : 'not set'; el.classList.toggle('synced', n>0); }
+
+        // ---------------- Background ----------------
+        function initBg(){ const scene=new THREE.Scene(); const cam=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,1000);
+            const r=new THREE.WebGLRenderer({canvas:document.getElementById('bg-canvas'),alpha:true,antialias:true}); r.setSize(innerWidth,innerHeight); r.setPixelRatio(Math.min(devicePixelRatio,2)); cam.position.z=34;
+            function mk(n,color,size,op){ const g=new THREE.BufferGeometry(),p=new Float32Array(n*3); for(let i=0;i<n*3;i++)p[i]=(Math.random()-0.5)*180; g.setAttribute('position',new THREE.BufferAttribute(p,3)); const pts=new THREE.Points(g,new THREE.PointsMaterial({color,size,transparent:true,opacity:op})); scene.add(pts); return pts; }
+            const a=mk(240,0xf7931a,0.45,0.5), b=mk(240,0x5b8def,0.35,0.32); let t=0;
+            (function loop(){ requestAnimationFrame(loop); t+=0.0008; a.rotation.y=t*0.5; a.rotation.x=t*0.2; b.rotation.y=-t*0.3; b.rotation.x=-t*0.15; r.render(scene,cam); })();
+            addEventListener('resize',()=>{ cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix(); r.setSize(innerWidth,innerHeight); }); }
+
+        // ---------------- Screening ----------------
+        async function screenAddress(addr){ if(screenedAddrs.has(addr)) return screenedAddrs.get(addr);
+            let score=0; const flags=[]; let stats=null;
+            try{ stats=await getJson(`${API}/address/${addr}`);}catch{}
+            const isApproved=APPROVED_SET.has(addr); const isSelf=addr===ADDRESS;
+            if(OFAC_SDN.has(addr)){ score+=100; flags.push({t:'OFAC Sanctioned',c:'bad'});}
+            if(KNOWN_SCAM.has(addr)){ score+=90; flags.push({t:'Known Scam',c:'bad'});}
+            let txCount=0, received=0;
+            if(stats){ txCount=stats.chain_stats.tx_count+stats.mempool_stats.tx_count; received=stats.chain_stats.funded_txo_sum; const rb=sat2btc(received);
+                if(txCount>50000){score+=25;flags.push({t:'Very high volume (exchange/mixer)',c:'caution'});} else if(txCount>5000){score+=12;flags.push({t:'High volume',c:'caution'});}
+                if(txCount<=2){score+=18;flags.push({t:'Fresh / passthrough',c:'caution'});}
+                if(rb>1000){score+=10;flags.push({t:'Large lifetime volume',c:'caution'});}
+                if(flags.length===0) flags.push({t:'No adverse signals',c:'ok'});
+            } else { flags.push({t:'On-chain data unavailable',c:'caution'}); score+=5; }
+            if(isApproved){ const bl=OFAC_SDN.has(addr)||KNOWN_SCAM.has(addr); const lbl=senderLabel(addr)||'Approved'; if(!bl){ score=0; flags.length=0; flags.push({t:`✓ ${lbl} — approved sender`,c:'ok'});} else { flags.unshift({t:`⚠ ${lbl} is BLACKLISTED`,c:'bad'});} }
+            else if(!isSelf){ score+=55; flags.unshift({t:'⚠ Unapproved wallet — not a known trade counterparty',c:'caution'}); }
+            const level=score>=70?'high':score>=25?'medium':'low';
+            const result={addr,score:Math.min(score,100),level,flags,txCount,received,isApproved,isSelf,label:senderLabel(addr)};
+            screenedAddrs.set(addr,result); return result; }
+        function extractSources(tx){ const m=new Map(); (tx.vin||[]).forEach(v=>{ const p=v.prevout; if(p&&p.scriptpubkey_address) m.set(p.scriptpubkey_address,(m.get(p.scriptpubkey_address)||0)+(p.value||0)); }); return m; }
+        function renderApprovedSenders(){ const el=document.getElementById('approved-list'); const n=APPROVED_SENDERS.length;
+            document.getElementById('approved-count').textContent=n+' wallet'+(n>1?'s':'');
+            el.innerHTML=APPROVED_SENDERS.map(s=>`<div class="appr-item"><div class="appr-dot"></div><div class="appr-body"><div class="appr-label">${s.label}${s.trade?`<span class="appr-trade">${s.trade}</span>`:''}</div><div class="appr-addr">${shortAddr(s.addr)}</div></div><div class="appr-exp">${s.expectBtc!=null?fmtBtc(s.expectBtc)+' BTC':'any amt'}</div></div>`).join(''); }
+
+        // ---------------- Blocks ----------------
+        function initBlocks(){ blockHistory.clear(); for(let i=currentBlock-7;i<=currentBlock;i++) blockHistory.add(i); renderBlocks(new Set()); }
+        function renderBlocks(fresh){ const grid=document.getElementById('block-grid'); grid.innerHTML='';
+            Array.from(blockHistory).sort((a,b)=>b-a).slice(0,8).forEach((n,i)=>{ const isNew=n===currentBlock; const el=document.createElement('div');
+                el.className='block'+(fresh.has(n)?' fresh':''); el.style.animation=`fadeUp .5s ease ${i*0.04}s both`;
+                el.innerHTML=`<div class="bh"><span>#${(''+n).slice(-4)}</span>${isNew?'<span class="new-tag">NEW</span>':''}</div><div class="bf">₿</div>`; grid.appendChild(el); }); }
+
+        // ---------------- Transactions ----------------
+        function txStatusBadge(tx){ if(tx.status&&tx.status.confirmed){ const c=currentBlock-tx.status.block_height+1; return `<span class="badge confirmed">✓ ${c} conf</span>`; } return `<span class="badge pending">⏳ Mempool</span>`; }
+        function renderSourcePanel(el, sources){ el.innerHTML=`<div class="source-head">🔍 Source screening · ${sources.length} address${sources.length>1?'es':''}</div>`+
+            sources.map(s=>{ const cls=s.level==='high'?'danger':s.level==='medium'?'warn':''; const ic=s.level==='high'?'⛔':s.level==='medium'?'⚠️':'✓';
+            return `<div class="source-item ${cls}"><div class="src-risk-icon ${s.level}">${ic}</div><div class="src-body"><div class="src-addr">${shortAddr(s.addr)}</div>
+            <div class="src-stats">${s.txCount.toLocaleString()} txs · ${fmtBtc(sat2btc(s.received))} BTC lifetime · sent ${fmtBtc(sat2btc(s.inputValue))} here</div>
+            <div class="src-flags">${s.flags.map(f=>`<span class="flag ${f.c==='bad'?'bad':f.c==='caution'?'caution':''}">${f.t}</span>`).join('')}</div></div>
+            <div class="src-score"><div class="n ${s.level}">${s.score}</div><div class="l">risk</div></div></div>`; }).join(''); }
+
+        async function renderTransactions(txs){ const list=document.getElementById('tx-list');
+            document.getElementById('tx-list-count').textContent = txs.length?`${txs.length} total`:'';
+            if(!txs.length){ list.innerHTML=`<div class="empty"><div class="e-ico">💰</div><h3>No payments yet</h3><p>Waiting for Wallet A to send BTC.</p><div class="wait-bar"><i></i></div></div>`; return; }
+            list.innerHTML='';
+            for(let idx=0; idx<txs.length; idx++){ const tx=txs[idx]; const isNew=!knownTxids.has(tx.txid); const justArrived=isNew&&!firstLoad;
+                let received=0; (tx.vout||[]).forEach(o=>{ if(o.scriptpubkey_address===ADDRESS) received+=o.value; });
+                const btcAmt=sat2btc(received), usd=btcAmt*btcPrice; const date=new Date((tx.status&&tx.status.block_time?tx.status.block_time*1000:Date.now()));
+                const el=document.createElement('div'); el.className='tx'; el.style.animation=`fadeUp .5s ease ${idx*0.04}s both`;
+                el.innerHTML=`<div class="tx-main"><div class="tx-top"><div><div class="tx-amt">+${fmtBtc(btcAmt)} BTC</div><div class="usd">${fmtUsd(usd)}</div></div>
+                    <div class="tx-badges">${justArrived?'<span class="badge new">🔔 New</span>':''}${txStatusBadge(tx)}<span class="badge" data-srctag style="display:none"></span><span class="badge" data-amttag style="display:none"></span><span class="badge risk-low" data-risk>screening…</span></div></div>
+                    <div class="tx-meta"><div class="m"><div class="k">Tx</div><div class="v link">${tx.txid.slice(0,10)}…${tx.txid.slice(-5)}</div></div>
+                    <div class="m"><div class="k">Received</div><div class="v">${date.toLocaleString()}</div></div>
+                    <div class="m"><div class="k">Block</div><div class="v">${tx.status&&tx.status.block_height?'#'+tx.status.block_height:'Mempool'}</div></div>
+                    <div class="m"><div class="k">Inputs</div><div class="v">${(tx.vin||[]).length} src</div></div></div></div>
+                    <div class="source-panel"><div class="src-loading">🔍 Analysing sources…</div></div>`;
+                list.appendChild(el); knownTxids.add(tx.txid);
+                const srcMap=extractSources(tx); const panel=el.querySelector('.source-panel'); const rb=el.querySelector('[data-risk]'); const tag=el.querySelector('[data-srctag]'); const amttag=el.querySelector('[data-amttag]');
+                (async()=>{ const sources=[]; for(const [addr,val] of srcMap){ const r=await screenAddress(addr); r.inputValue=val; sources.push(r); }
+                    totalScreened+=sources.length; const max=sources.reduce((m,s)=>Math.max(m,s.score),0); const worst=max>=70?'high':max>=25?'medium':'low';
+                    const approvedHit=sources.some(s=>s.isApproved); const unexpected=sources.length>0 && !approvedHit;
+                    // Amount check against the matched trade's expected size
+                    const apprSrc=sources.find(s=>s.isApproved); const cfg=apprSrc?senderCfg(apprSrc.addr):null;
+                    let amountMismatch=false, expectBtc=null;
+                    if(cfg&&cfg.expectBtc!=null){ expectBtc=cfg.expectBtc; const tol=cfg.tolerance!=null?cfg.tolerance:Math.max(cfg.expectBtc*0.005,1e-5); if(Math.abs(btcAmt-cfg.expectBtc)>tol) amountMismatch=true; }
+                    if(worst==='high'){ el.classList.add('flagged'); flaggedTotal++; } else if(worst==='low'&&!unexpected&&!amountMismatch) el.classList.add('clear');
+                    if(unexpected){ el.classList.add('unexpected'); unexpectedTotal++; }
+                    if(amountMismatch){ el.classList.add('unexpected'); mismatchTotal++; }
+                    rb.className=`badge risk-${worst}`; rb.textContent=worst==='high'?'⛔ Flagged':worst==='medium'?'⚠ Caution':'✓ Clear';
+                    if(unexpected){ tag.style.display=''; tag.className='badge risk-high'; tag.textContent='🚩 Unexpected source'; }
+                    else if(approvedHit){ const lbls=[...new Set(sources.filter(s=>s.isApproved).map(s=>s.label||'Approved'))].join(', '); tag.style.display=''; tag.className='badge confirmed'; tag.textContent='✓ '+lbls; }
+                    if(amountMismatch){ amttag.style.display=''; amttag.className='badge risk-medium'; amttag.textContent=`≠ expected ${fmtBtc(expectBtc)}`; }
+                    renderSourcePanel(panel,sources); updateComplianceBanner();
+                    if(justArrived){ const fromLbl=[...new Set(sources.filter(s=>s.isApproved).map(s=>s.label))].join(', ')||'approved sender';
+                        if(unexpected){ sendAlert({title:'🚩 UNEXPECTED payment received',body:`+${fmtBtc(btcAmt)} BTC (${fmtUsd(usd)}) from a wallet that is NOT an approved trade counterparty. Verify the source before settling.`,urgent:true,flagged:true,kind:'unexpected_source',amountBtc:btcAmt,usd,txid:tx.txid}); }
+                        else if(worst==='high'){ sendAlert({title:'🚨 FLAGGED payment received',body:`+${fmtBtc(btcAmt)} BTC (${fmtUsd(usd)}) from a HIGH-RISK source. Review before settling.`,urgent:true,flagged:true,kind:'high_risk',amountBtc:btcAmt,usd,txid:tx.txid}); }
+                        else if(amountMismatch){ sendAlert({title:'⚠️ Amount mismatch',body:`${fromLbl} sent +${fmtBtc(btcAmt)} BTC (${fmtUsd(usd)}) but the trade expected ${fmtBtc(expectBtc)} BTC. Verify before settling.`,urgent:true,flagged:true,kind:'amount_mismatch',amountBtc:btcAmt,expectBtc,usd,txid:tx.txid}); }
+                        else { sendAlert({title:worst==='medium'?'⚠️ Payment received (caution)':'💰 Payment received',body:`+${fmtBtc(btcAmt)} BTC (${fmtUsd(usd)}) · from ${fromLbl} · screening ${worst==='medium'?'caution':'clear'}.`,urgent:false,flagged:false,kind:'payment',amountBtc:btcAmt,usd,txid:tx.txid}); } }
+                })();
+            }
+        }
+
+        function updateComplianceBanner(){ document.getElementById('screened-count').textContent=totalScreened;
+            const card=document.getElementById('comp-card'), title=document.getElementById('comp-title'), desc=document.getElementById('comp-desc'), shield=document.getElementById('shield-icon');
+            if(flaggedTotal>0||unexpectedTotal>0||mismatchTotal>0){ card.classList.add('flagged'); shield.textContent='🚨';
+                const parts=[]; if(unexpectedTotal>0) parts.push(`${unexpectedTotal} unexpected`); if(mismatchTotal>0) parts.push(`${mismatchTotal} amount mismatch`); if(flaggedTotal>0) parts.push(`${flaggedTotal} high-risk`);
+                title.textContent=parts.join(' · ');
+                desc.textContent = unexpectedTotal>0 ? 'Payment(s) from a non-approved wallet. Verify before settling.' : mismatchTotal>0 ? 'Payment amount differs from the expected trade size. Verify before settling.' : 'High-risk/sanctioned origin detected. Review before settling.'; }
+            else if(totalScreened>0){ card.classList.remove('flagged'); shield.textContent='🛡️'; title.textContent='All sources clear'; desc.textContent=`${totalScreened} address${totalScreened>1?'es':''} screened — all from approved wallets.`; } }
+
+        // ---------------- Confirmation tracker ----------------
+        function updateConfirmation(txs){ const body=document.getElementById('conf-body');
+            // pick in-flight (mempool) first, else most recent confirmed-but-young
+            let active=null;
+            for(const tx of txs){ const paysUs=(tx.vout||[]).some(o=>o.scriptpubkey_address===ADDRESS); if(!paysUs) continue;
+                if(!(tx.status&&tx.status.confirmed)){ active=tx; break; } }
+            if(!active){ for(const tx of txs){ const paysUs=(tx.vout||[]).some(o=>o.scriptpubkey_address===ADDRESS); if(!paysUs) continue;
+                if(tx.status&&tx.status.confirmed){ const c=currentBlock-tx.status.block_height+1; if(c<=6){ active=tx; break; } } } }
+            if(!active){ body.innerHTML='<div class="conf-empty">No active payment to track.</div>'; return; }
+            let amt=0; (active.vout||[]).forEach(o=>{ if(o.scriptpubkey_address===ADDRESS) amt+=o.value; });
+            const confirmed=active.status&&active.status.confirmed; const c=confirmed?Math.min(currentBlock-active.status.block_height+1,6):0;
+            const remaining=6-c; const eta=confirmed?(remaining>0?`~${remaining*10} min`:'Final'):'awaiting block';
+            body.innerHTML=`<div class="conf-amt">+${fmtBtc(sat2btc(amt))} BTC</div>
+                <div class="conf-sub">${fmtUsd(sat2btc(amt)*btcPrice)} · ${confirmed?c+'/6 confirmations':'⏳ Unconfirmed (mempool)'}</div>
+                <div class="conf-dots">${Array.from({length:6},(_, i)=>`<div class="conf-dot ${i<c?'on':''}"></div>`).join('')}</div>
+                <div class="conf-foot"><span class="l">${confirmed?'Confirmations':'Status'}</span><span class="r">${confirmed?c+' / 6':'In mempool'} · ETA ${eta}</span></div>`; }
+
+        // ---------------- Network ----------------
+        async function updateNetwork(){ try{
+            const fees=await getJson(`${API}/fee-estimates`);
+            document.getElementById('net-fee').innerHTML=`${(fees['1']||fees['2']||0).toFixed(1)} <small>sat/vB</small>`;
+            document.getElementById('net-fee-slow').innerHTML=`${(fees['3']||fees['6']||0).toFixed(1)} <small>sat/vB</small>`;
+            const blocks=await getJson(`${API}/blocks`); const b=blocks[0];
+            document.getElementById('net-blockage').textContent=ago(Math.max(0,Math.floor(Date.now()/1000-b.timestamp)));
+            document.getElementById('net-blocktxs').textContent=b.tx_count.toLocaleString();
+        }catch(e){ console.error('network',e); } }
+
+        // ---------------- Sender flow ----------------
+        async function updateSenderFlow(){ try{
+            const info=await getJson(`${API}/address/${SENDER}`); const cs=info.chain_stats, ms=info.mempool_stats;
+            const bal=sat2btc((cs.funded_txo_sum-cs.spent_txo_sum)+(ms.funded_txo_sum-ms.spent_txo_sum));
+            document.getElementById('sender-balance').textContent=fmtBtc(bal)+' BTC';
+            const txs=await getJson(`${API}/address/${SENDER}/txs`); let inflight=null, settled=null;
+            for(const tx of txs){ const paysUs=(tx.vout||[]).some(o=>o.scriptpubkey_address===ADDRESS); const fromSender=(tx.vin||[]).some(v=>v.prevout&&v.prevout.scriptpubkey_address===SENDER);
+                if(paysUs&&fromSender){ if(tx.status&&tx.status.confirmed) settled=settled||tx; else inflight=inflight||tx; } }
+            const arrow=document.getElementById('flow-arrow'), fstate=document.getElementById('flow-state'), sstatus=document.getElementById('sender-status'), rcard=document.getElementById('receiver-card');
+            if(inflight){ arrow.className='flow-arrow active'; fstate.textContent='💸 In flight'; sstatus.textContent='Sending now'; rcard.classList.add('incoming');
+                let amt=0;(inflight.vout||[]).forEach(o=>{if(o.scriptpubkey_address===ADDRESS)amt+=o.value;});
+                if(inflightTxid!==inflight.txid){ inflightTxid=inflight.txid; if(!firstLoad){ sendAlert({title:'💸 Payment in flight: Wallet A → Wallet B',body:`${fmtBtc(sat2btc(amt))} BTC (${fmtUsd(sat2btc(amt)*btcPrice)}) broadcast — awaiting confirmation.`,urgent:false,flagged:false,kind:'inflight',amountBtc:sat2btc(amt),txid:inflight.txid}); } } }
+            else if(settled){ arrow.className='flow-arrow done'; fstate.textContent='✓ Received'; sstatus.textContent='Paid'; rcard.classList.remove('incoming'); }
+            else { arrow.className='flow-arrow'; fstate.textContent='Awaiting'; sstatus.textContent=bal>0?'Funds ready ✓':'No funds'; rcard.classList.remove('incoming'); }
+        }catch(e){ console.error('sender',e); } }
+
+        // ---------------- Clock ----------------
+        function updateClock(){ const d=new Date();
+            document.getElementById('clock-time').textContent=d.toLocaleTimeString('en-GB');
+            document.getElementById('clock-date').textContent=`${d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})} · UTC ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; }
+
+        // ---------------- Main tick ----------------
+        async function tick(){ try{
+            const h=parseInt(await getText(`${API}/blocks/tip/height`));
+            if(!currentBlock){ currentBlock=h; initBlocks(); }
+            else if(h>currentBlock){ const fresh=new Set(); for(let i=currentBlock+1;i<=h;i++){ blockHistory.add(i); fresh.add(i);} currentBlock=h; renderBlocks(fresh); }
+            document.getElementById('block-height').textContent='#'+currentBlock;
+            document.getElementById('block-count').textContent='#'+currentBlock;
+
+            btcPrice=await fetchBtcPrice(); document.getElementById('btc-price').textContent=fmtUsd(btcPrice);
+
+            const info=await getJson(`${API}/address/${ADDRESS}`);
+            const balBtc=sat2btc(info.chain_stats.funded_txo_sum+info.mempool_stats.funded_txo_sum);
+            document.getElementById('balance-btc').textContent=fmtBtc(balBtc);
+            document.getElementById('balance-usd').textContent=fmtUsd(balBtc*btcPrice);
+            document.getElementById('receiver-balance').textContent=fmtBtc(balBtc)+' BTC';
+            document.getElementById('tx-count').textContent=info.chain_stats.tx_count+info.mempool_stats.tx_count;
+
+            await updateSenderFlow();
+            await updateNetwork();
+
+            const txs=await getJson(`${API}/address/${ADDRESS}/txs`);
+            updateConfirmation(txs);
+            await renderTransactions(txs);
+            firstLoad=false;
+            document.getElementById('last-update').textContent=new Date().toLocaleTimeString('en-GB');
+        }catch(e){ console.error('tick',e); } }
+
+        // ---------------- Init ----------------
+        // Parse URL parameters and initialize configuration
+        initializeFromUrl();
+        document.getElementById('config-status').textContent = configSource === 'url' ? '🔗 Custom (from URL)' : 'Default';
+        if (configSource === 'url') {
+            const shareUrl = getShareableUrl();
+            document.getElementById('config-status').title = `Click to copy shareable link`;
+            document.getElementById('config-status').style.cursor = 'pointer';
+            document.getElementById('config-status').addEventListener('click', () => {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    const el = document.getElementById('config-status');
+                    const orig = el.textContent;
+                    el.textContent = '✓ Copied!';
+                    setTimeout(() => el.textContent = orig, 1500);
+                });
+            });
+        }
+
+        document.getElementById('copy-btn').addEventListener('click',()=>{ navigator.clipboard.writeText(ADDRESS).then(()=>{ const b=document.getElementById('copy-btn'); b.textContent='✓'; setTimeout(()=>b.textContent='Copy',1500); }); });
+        document.getElementById('wallet-addr').textContent=ADDRESS;
+        document.getElementById('sender-addr').textContent=SENDER;
+        document.getElementById('alert-btn').addEventListener('click',enableAlerts);
+        document.getElementById('webhook-btn').addEventListener('click',configureWebhooks);
+
+        renderApprovedSenders(); updateWebhookStatus();
+        initBg(); updateClock(); setInterval(updateClock,1000);
+        syncOfac(); setInterval(syncOfac,86400000);
+        tick(); setInterval(tick,10000);
+    </script>
+</body>
+</html>
