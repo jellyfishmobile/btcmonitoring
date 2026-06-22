@@ -139,6 +139,7 @@
         .flag { font-size: 9px; padding: 2px 7px; border-radius: 5px; font-weight: 600; background: rgba(255,255,255,.06); color: var(--text-dim); }
         .flag.bad { background: rgba(242,95,92,.15); color: var(--red); }
         .flag.caution { background: rgba(251,191,36,.13); color: var(--amber); }
+        .src-lineage { font-size: 10px; color: var(--text-dim); margin-top: 8px; font-family: var(--mono); background: rgba(255,255,255,0.02); padding: 5px 8px; border-radius: 6px; border: 1px dashed rgba(255,255,255,0.05); display: flex; align-items: center; gap: 4px; overflow-x: auto; white-space: nowrap; }
         .src-score { text-align: right; flex-shrink: 0; }
         .src-score .n { font-size: 16px; font-weight: 800; font-family: var(--mono); }
         .src-score .n.low { color: var(--green); } .src-score .n.medium { color: var(--amber); } .src-score .n.high { color: var(--red); }
@@ -508,24 +509,149 @@
             addEventListener('resize',()=>{ cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix(); r.setSize(innerWidth,innerHeight); }); }
 
         // ---------------- Screening ----------------
-        async function screenAddress(addr){ if(screenedAddrs.has(addr)) return screenedAddrs.get(addr);
-            let score=0; const flags=[]; let stats=null;
-            try{ stats=await getJson(`${API}/address/${addr}`);}catch{}
-            const isApproved=APPROVED_SET.has(addr); const isSelf=addr===ADDRESS;
-            if(OFAC_SDN.has(addr)){ score+=100; flags.push({t:'OFAC Sanctioned',c:'bad'});}
-            if(KNOWN_SCAM.has(addr)){ score+=90; flags.push({t:'Known Scam',c:'bad'});}
-            let txCount=0, received=0;
-            if(stats){ txCount=stats.chain_stats.tx_count+stats.mempool_stats.tx_count; received=stats.chain_stats.funded_txo_sum; const rb=sat2btc(received);
-                if(txCount>50000){score+=25;flags.push({t:'Very high volume (exchange/mixer)',c:'caution'});} else if(txCount>5000){score+=12;flags.push({t:'High volume',c:'caution'});}
-                if(txCount<=2){score+=18;flags.push({t:'Fresh / passthrough',c:'caution'});}
-                if(rb>1000){score+=10;flags.push({t:'Large lifetime volume',c:'caution'});}
-                if(flags.length===0) flags.push({t:'No adverse signals',c:'ok'});
-            } else { flags.push({t:'On-chain data unavailable',c:'caution'}); score+=5; }
-            if(isApproved){ const bl=OFAC_SDN.has(addr)||KNOWN_SCAM.has(addr); const lbl=senderLabel(addr)||'Approved'; if(!bl){ score=0; flags.length=0; flags.push({t:`✓ ${lbl} — approved sender`,c:'ok'});} else { flags.unshift({t:`⚠ ${lbl} is BLACKLISTED`,c:'bad'});} }
-            else if(!isSelf){ score+=55; flags.unshift({t:'⚠ Unapproved wallet — not a known trade counterparty',c:'caution'}); }
-            const level=score>=70?'high':score>=25?'medium':'low';
-            const result={addr,score:Math.min(score,100),level,flags,txCount,received,isApproved,isSelf,label:senderLabel(addr)};
-            screenedAddrs.set(addr,result); return result; }
+        const ENTITY_TAGS = {
+            '3MqUP6G1daVS5YTD8fz3QgwjZortWwxXFd': 'Coinbase Institutional',
+            '1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF': 'OFAC Sanctioned Entity',
+            'bc1q0sg9rdst255gtldsmcf8rk0764avqy2h2ksqs5': 'OFAC Sanctioned Entity',
+            '1Lpe9wKbnpAKRcDfBdYZcYvqYW7gpu87QM': 'Known Scam'
+        };
+
+        async function screenAddress(addr, depth = 0, maxDepth = 2, visited = new Set()) {
+            const cacheKey = `${addr}_${depth}`;
+            if (screenedAddrs.has(cacheKey)) return screenedAddrs.get(cacheKey);
+
+            let score = 0;
+            const flags = [];
+            let stats = null;
+            let lineage = [addr];
+            let worstUpstreamRisk = 'low';
+
+            try {
+                stats = await getJson(`${API}/address/${addr}`);
+            } catch (e) {
+                console.error("Error fetching stats", addr, e);
+            }
+
+            const isApproved = APPROVED_SET.has(addr);
+            const isSelf = addr === ADDRESS;
+
+            if (OFAC_SDN.has(addr)) {
+                score += 100;
+                flags.push({ t: 'OFAC Sanctioned', c: 'bad' });
+                worstUpstreamRisk = 'high';
+            }
+            if (KNOWN_SCAM.has(addr)) {
+                score += 90;
+                flags.push({ t: 'Known Scam', c: 'bad' });
+                worstUpstreamRisk = 'high';
+            }
+
+            let txCount = 0, received = 0;
+            if (stats) {
+                txCount = stats.chain_stats.tx_count + stats.mempool_stats.tx_count;
+                received = stats.chain_stats.funded_txo_sum;
+                const rb = sat2btc(received);
+
+                if (txCount > 50000) {
+                    const tag = ENTITY_TAGS[addr] || 'High Volume (Exchange/Mixer)';
+                    flags.push({ t: tag, c: 'caution' });
+                } else if (txCount > 5000) {
+                    flags.push({ t: 'High volume', c: 'caution' });
+                }
+                if (txCount <= 2) {
+                    flags.push({ t: 'Fresh / passthrough', c: 'caution' });
+                }
+                if (rb > 1000) {
+                    flags.push({ t: 'Large lifetime volume', c: 'caution' });
+                }
+            } else {
+                flags.push({ t: 'On-chain data unavailable', c: 'caution' });
+                score += 5;
+            }
+
+            if (isApproved) {
+                const bl = OFAC_SDN.has(addr) || KNOWN_SCAM.has(addr);
+                const lbl = senderLabel(addr) || 'Approved';
+                if (!bl) {
+                    flags.push({ t: `✓ ${lbl} — approved sender`, c: 'ok' });
+                } else {
+                    flags.unshift({ t: `⚠ ${lbl} is BLACKLISTED`, c: 'bad' });
+                }
+            } else if (!isSelf && depth === 0) {
+                score += 55;
+                flags.unshift({ t: '⚠ Unapproved wallet', c: 'caution' });
+            }
+
+            if (depth < maxDepth && txCount < 50000 && !OFAC_SDN.has(addr) && !KNOWN_SCAM.has(addr) && stats && txCount > 0 && !visited.has(addr)) {
+                visited.add(addr);
+                try {
+                    const txs = await getJson(`${API}/address/${addr}/txs`);
+                    let incomingTx = null;
+                    for (const tx of txs) {
+                        const paysAddr = (tx.vout || []).some(o => o.scriptpubkey_address === addr);
+                        if (paysAddr) {
+                            incomingTx = tx;
+                            break;
+                        }
+                    }
+
+                    if (incomingTx) {
+                        const upstreamAddrs = [];
+                        (incomingTx.vin || []).forEach(vin => {
+                            const p = vin.prevout;
+                            if (p && p.scriptpubkey_address && p.scriptpubkey_address !== addr) {
+                                upstreamAddrs.push(p.scriptpubkey_address);
+                            }
+                        });
+
+                        for (const upAddr of upstreamAddrs.slice(0, 2)) {
+                            const upResult = await screenAddress(upAddr, depth + 1, maxDepth, new Set(visited));
+                            
+                            if (upResult.level === 'high') worstUpstreamRisk = 'high';
+                            else if (upResult.level === 'medium' && worstUpstreamRisk !== 'high') worstUpstreamRisk = 'medium';
+
+                            if (upResult.score >= 90) {
+                                score += upResult.score * 0.8;
+                                flags.push({ t: `Upstream Risk: ${upResult.flags.map(f => f.t).join(', ')} (${depth+1} hop(s) away)`, c: 'bad' });
+                            } else if (upResult.flags.some(f => f.t.includes('Coinbase') || f.t.includes('Exchange'))) {
+                                const tag = ENTITY_TAGS[upAddr] || 'Upstream Exchange';
+                                flags.push({ t: `✓ Origin: ${tag} (${depth+1} hop(s) away)`, c: 'ok' });
+                            }
+
+                            lineage = lineage.concat(upResult.lineage);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error tracing upstream", addr, e);
+                }
+            }
+
+            if (worstUpstreamRisk === 'high' || score >= 70) {
+                score = Math.max(score, 75);
+            }
+            const level = score >= 70 ? 'high' : score >= 25 ? 'medium' : 'low';
+            
+            const cleanLineage = [...new Set(lineage)].map(a => {
+                const tag = ENTITY_TAGS[a];
+                return tag ? `${shortAddr(a)} (${tag})` : shortAddr(a);
+            });
+
+            const result = {
+                addr,
+                score: Math.min(Math.round(score), 100),
+                level,
+                flags,
+                txCount,
+                received,
+                isApproved,
+                isSelf,
+                label: senderLabel(addr),
+                lineage: cleanLineage
+            };
+
+            screenedAddrs.set(cacheKey, result);
+            return result;
+        }
         function extractSources(tx){ const m=new Map(); (tx.vin||[]).forEach(v=>{ const p=v.prevout; if(p&&p.scriptpubkey_address) m.set(p.scriptpubkey_address,(m.get(p.scriptpubkey_address)||0)+(p.value||0)); }); return m; }
         function renderApprovedSenders(){ const el=document.getElementById('approved-list'); const n=APPROVED_SENDERS.length;
             document.getElementById('approved-count').textContent=n+' wallet'+(n>1?'s':'');
@@ -540,11 +666,13 @@
 
         // ---------------- Transactions ----------------
         function txStatusBadge(tx){ if(tx.status&&tx.status.confirmed){ const c=currentBlock-tx.status.block_height+1; return `<span class="badge confirmed">✓ ${c} conf</span>`; } return `<span class="badge pending">⏳ Mempool</span>`; }
-        function renderSourcePanel(el, sources){ el.innerHTML=`<div class="source-head">🔍 Source screening · ${sources.length} address${sources.length>1?'es':''}</div>`+
+        function renderSourcePanel(el, sources){ el.innerHTML=`<div class="source-head">🔍 Source lineage tracking & screening · ${sources.length} input(s)</div>`+
             sources.map(s=>{ const cls=s.level==='high'?'danger':s.level==='medium'?'warn':''; const ic=s.level==='high'?'⛔':s.level==='medium'?'⚠️':'✓';
+            const lineageStr = s.lineage && s.lineage.length > 1 ? `<div class="src-lineage"><b>Lineage:</b> ${s.lineage.join(' &larr; ')}</div>` : '';
             return `<div class="source-item ${cls}"><div class="src-risk-icon ${s.level}">${ic}</div><div class="src-body"><div class="src-addr">${shortAddr(s.addr)}</div>
             <div class="src-stats">${s.txCount.toLocaleString()} txs · ${fmtBtc(sat2btc(s.received))} BTC lifetime · sent ${fmtBtc(sat2btc(s.inputValue))} here</div>
-            <div class="src-flags">${s.flags.map(f=>`<span class="flag ${f.c==='bad'?'bad':f.c==='caution'?'caution':''}">${f.t}</span>`).join('')}</div></div>
+            <div class="src-flags">${s.flags.map(f=>`<span class="flag ${f.c==='bad'?'bad':f.c==='caution'?'caution':''}">${f.t}</span>`).join('')}</div>
+            ${lineageStr}</div>
             <div class="src-score"><div class="n ${s.level}">${s.score}</div><div class="l">risk</div></div></div>`; }).join(''); }
 
         async function renderTransactions(txs){ const list=document.getElementById('tx-list');
